@@ -23,6 +23,7 @@ class DELPHIDataSaver:
             df_global_parameters: Union[pd.DataFrame, None],
             df_global_predictions_since_today: pd.DataFrame,
             df_global_predictions_since_100_cases: pd.DataFrame,
+            logger
     ):
         self.PATH_TO_FOLDER_DANGER_MAP = path_to_folder_danger_map
         self.PATH_TO_WEBSITE_PREDICTED = path_to_website_predicted
@@ -31,6 +32,28 @@ class DELPHIDataSaver:
         self.df_global_predictions_since_100_cases = (
             df_global_predictions_since_100_cases
         )
+        self.logger = logger
+
+    @staticmethod
+    def save_dataframe(df, path, logger):
+        attempt = 0
+        success = False
+        filename = path
+        while attempt <= 5 and not success:
+            success = True
+            attempt+=1
+            try:
+                df.to_csv(filename, index=False)
+            except IOError:
+                success = False
+                filename = path.replace(".csv", f"_try_{attempt}.csv")
+
+        if not success:
+            logger.error(
+                f"Unable to save file {path}, skipping after {attempt} attempts"
+            )
+            return attempt
+        return 0
 
     def save_all_datasets(
             self, optimizer: str, save_since_100_cases: bool = False, website: bool = False
@@ -47,51 +70,60 @@ class DELPHIDataSaver:
         """
         today_date_str = "".join(str(datetime.now().date()).split("-"))
         if optimizer == "tnc":
-            subname_file = "Global_V2"
+            subname_file = "Global_V4"
         elif optimizer == "annealing":
-            subname_file = "Global_V2_annealing"
+            subname_file = "Global_V4_annealing"
         elif optimizer == "trust-constr":
-            subname_file = "Global_V2_trust"
+            subname_file = "Global_V4_trust"
         else:
             raise ValueError("Optimizer not supported in this implementation")
         # Save parameters
-        self.df_global_parameters.to_csv(
+
+        DELPHIDataSaver.save_dataframe(
+            self.df_global_parameters,
             self.PATH_TO_FOLDER_DANGER_MAP + f"/predicted/Parameters_{subname_file}_{today_date_str}.csv",
-            index=False,
+            self.logger
             )
         # Save predictions since today
-        self.df_global_predictions_since_today.to_csv(
+        DELPHIDataSaver.save_dataframe(
+            self.df_global_predictions_since_today,
             self.PATH_TO_FOLDER_DANGER_MAP + f"/predicted/{subname_file}_{today_date_str}.csv",
-            index=False,
+            self.logger
             )
         if website:
-            self.df_global_parameters.to_csv(
+            DELPHIDataSaver.save_dataframe(
+                self.df_global_parameters,
                 self.PATH_TO_WEBSITE_PREDICTED + f"data/predicted/Parameters_{subname_file}_{today_date_str}.csv",
-                index=False,
+                self.logger
                 )
-            self.df_global_predictions_since_today.to_csv(
+            DELPHIDataSaver.save_dataframe(
+                self.df_global_predictions_since_today,
                 self.PATH_TO_WEBSITE_PREDICTED
                 + f"data/predicted/{subname_file}_{today_date_str}.csv",
-                index=False,
+                self.logger
                 )
-            self.df_global_predictions_since_today.to_csv(
+            DELPHIDataSaver.save_dataframe(
+                self.df_global_predictions_since_today,
                 self.PATH_TO_WEBSITE_PREDICTED + f"data/predicted/Global.csv",
-                index=False,
+                self.logger
                 )
         if save_since_100_cases:
             # Save predictions since 100 cases
-            self.df_global_predictions_since_100_cases.to_csv(
+            DELPHIDataSaver.save_dataframe(
+                self.df_global_predictions_since_100_cases,
                 self.PATH_TO_FOLDER_DANGER_MAP + f"/predicted/{subname_file}_since100_{today_date_str}.csv",
-                index=False,
+                self.logger
                 )
             if website:
-                self.df_global_predictions_since_100_cases.to_csv(
+                DELPHIDataSaver.save_dataframe(
+                    self.df_global_predictions_since_100_cases,
                     self.PATH_TO_WEBSITE_PREDICTED + f"data/predicted/{subname_file}_since100_{today_date_str}.csv",
-                    index=False,
+                    self.logger
                     )
-                self.df_global_predictions_since_100_cases.to_csv(
+                DELPHIDataSaver.save_dataframe(
+                    self.df_global_predictions_since_100_cases,
                     self.PATH_TO_WEBSITE_PREDICTED + f"data/predicted/{subname_file}_since100.csv",
-                    index=False,
+                    self.logger
                     )
 
     def save_policy_predictions_to_json(self, website: bool = False, local_delphi: bool = False):
@@ -225,11 +257,11 @@ class DELPHIDataCreator:
     ):
         if testing_data_included:
             assert (
-                    len(best_params) == 14
+                    len(best_params) == 15
             ), f"Expected 9 best parameters, got {len(best_params)}"
         else:
             assert (
-                    len(best_params) == 11
+                    len(best_params) == 12
             ), f"Expected 7 best parameters, got {len(best_params)}"
         self.x_sol_final = x_sol_final
         self.date_day_since100 = date_day_since100
@@ -268,6 +300,7 @@ class DELPHIDataCreator:
                 "Jump Magnitude": [self.best_params[8]],
                 "Jump Time": [self.best_params[9]],
                 "Jump Decay": [self.best_params[10]],
+                "Internal Parameter 3": [self.best_params[11]],
             }
         )
         return df_parameters
@@ -1737,7 +1770,6 @@ class DELPHIBacktest:
 
         return dict_df_backtest_metrics
 
-
 def get_initial_conditions(params_fitted: tuple, global_params_fixed: tuple) -> list:
     """
     Generates the initial conditions for the DELPHI model based on global fixed parameters (mostly populations and some
@@ -1746,8 +1778,12 @@ def get_initial_conditions(params_fitted: tuple, global_params_fixed: tuple) -> 
     :param global_params_fixed: tuple of fixed and constant parameters for the model defined a while ago
     :return: a list of initial conditions for all 16 states of the DELPHI model
     """
-    alpha, days, r_s, r_dth, p_dth, r_dthdecay, k1, k2 = params_fitted[:8]
-    N, PopulationCI, PopulationR, PopulationD, PopulationI, p_d, p_h, p_v = global_params_fixed
+    alpha, days, r_s, r_dth, p_dth, r_dthdecay, k1, k2, jump, t_jump, std_normal, k3 = params_fitted 
+    N, R_upperbound, R_heuristic, R_0, PopulationD, PopulationI, p_d, p_h, p_v = global_params_fixed
+
+    PopulationR = min(R_upperbound - 1, min(int(R_0*p_d), R_heuristic))
+    PopulationCI = (PopulationI - PopulationD - PopulationR)*k3
+
     S_0 = (
         (N - PopulationCI / p_d)
         - (PopulationCI / p_d * (k1 + k2))
